@@ -86,6 +86,39 @@ function extractDisplayName(ogTitle, handle) {
   return match?.[1]?.trim() || handle;
 }
 
+async function fetchInstagramProfileJson(handle, profileUrl) {
+  const response = await fetch(
+    `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(handle)}`,
+    {
+      headers: {
+        'user-agent':
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        accept: '*/*',
+        'accept-language': 'en-US,en;q=0.9',
+        'x-ig-app-id': '936619743392459',
+        referer: profileUrl,
+      },
+    }
+  );
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const payload = await response.json();
+  const user = payload?.data?.user;
+  if (!user) {
+    return null;
+  }
+
+  return {
+    handle: user.username || handle,
+    profileUrl,
+    displayName: user.full_name || user.username || handle,
+    avatarUrl: user.profile_pic_url_hd || user.profile_pic_url || null,
+  };
+}
+
 function getInputFromRequest(request) {
   if (request?.queryStringParameters) {
     return request.queryStringParameters.input || request.queryStringParameters.username || '';
@@ -113,6 +146,16 @@ export default async function handler(event) {
       });
     }
 
+    const apiProfile = await fetchInstagramProfileJson(parsed.handle, parsed.profileUrl);
+    if (apiProfile?.avatarUrl) {
+      return Response.json(apiProfile, {
+        status: 200,
+        headers: {
+          'cache-control': 'public, max-age=300',
+        },
+      });
+    }
+
     const response = await fetch(parsed.profileUrl, {
       headers: {
         'user-agent':
@@ -134,12 +177,12 @@ export default async function handler(event) {
     const html = await response.text();
     const ogImage =
       extractMeta(html, 'og:image') ||
-      extractMeta(html, 'twitter:image') ||
+      extractMeta(html, 'twitter:image', 'name') ||
       extractJsonString(html, 'profile_pic_url') ||
       extractJsonString(html, 'profile_pic_url_hd');
     const ogTitle =
       extractMeta(html, 'og:title') ||
-      extractMeta(html, 'twitter:title') ||
+      extractMeta(html, 'twitter:title', 'name') ||
       extractJsonString(html, 'full_name');
     const displayName = extractDisplayName(ogTitle, parsed.handle);
 
