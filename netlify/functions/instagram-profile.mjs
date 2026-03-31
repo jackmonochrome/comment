@@ -1,4 +1,10 @@
 const INSTAGRAM_HOST = 'www.instagram.com';
+const BROWSER_HEADERS = {
+  'user-agent':
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+  'accept-language': 'en-US,en;q=0.9',
+};
 
 function parseInstagramInput(input) {
   const trimmed = String(input || '').trim();
@@ -86,15 +92,107 @@ function extractDisplayName(ogTitle, handle) {
   return match?.[1]?.trim() || handle;
 }
 
+function extractImageFromHtml(html, predicates = []) {
+  const imgTags = html.match(/<img\b[^>]*>/gi) || [];
+
+  for (const tag of imgTags) {
+    const srcMatch = tag.match(/\bsrc\s*=\s*("([^"]*)"|'([^']*)')/i);
+    const src = srcMatch?.[2] ?? srcMatch?.[3] ?? '';
+    if (!src) continue;
+
+    const normalizedSrc = decodeHtml(src);
+    if (!normalizedSrc.startsWith('http')) continue;
+
+    if (!predicates.length || predicates.some((predicate) => predicate(tag, normalizedSrc))) {
+      return normalizedSrc;
+    }
+  }
+
+  return null;
+}
+
+async function fetchHtml(url, headers = {}) {
+  const response = await fetch(url, {
+    headers: {
+      ...BROWSER_HEADERS,
+      ...headers,
+    },
+  });
+
+  if (!response.ok) {
+    return {
+      ok: false,
+      status: response.status,
+      url,
+      html: '',
+    };
+  }
+
+  return {
+    ok: true,
+    status: response.status,
+    url,
+    html: await response.text(),
+  };
+}
+
+async function fetchPicukiProfile(handle) {
+  const urls = [
+    `https://picuki.io/profile/${encodeURIComponent(handle)}/`,
+    `https://picuki.io/profile/${encodeURIComponent(handle)}`,
+  ];
+
+  for (const url of urls) {
+    try {
+      const result = await fetchHtml(url);
+      if (!result.ok) {
+        continue;
+      }
+
+      const { html } = result;
+      const avatarUrl =
+        extractMeta(html, 'og:image') ||
+        extractMeta(html, 'twitter:image', 'name') ||
+        extractJsonString(html, 'image') ||
+        extractImageFromHtml(html, [
+          (tag, src) =>
+            /profile|avatar|photo|picture/i.test(tag) ||
+            /cdninstagram|cdninstagramprofile|profile/i.test(src),
+        ]);
+
+      const title =
+        extractMeta(html, 'og:title') ||
+        extractMeta(html, 'twitter:title', 'name') ||
+        extractJsonString(html, 'name');
+
+      if (avatarUrl) {
+        return {
+          ok: true,
+          source: 'picuki',
+          handle,
+          profileUrl: `https://${INSTAGRAM_HOST}/${handle}/`,
+          displayName: extractDisplayName(title, handle),
+          avatarUrl,
+        };
+      }
+    } catch {
+      // Try the next candidate URL.
+    }
+  }
+
+  return {
+    ok: false,
+    source: 'picuki',
+  };
+}
+
 async function fetchInstagramProfileJson(handle, profileUrl) {
   const response = await fetch(
     `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(handle)}`,
     {
       headers: {
-        'user-agent':
-          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        ...BROWSER_HEADERS,
         accept: '*/*',
-        'accept-language': 'en-US,en;q=0.9',
         'x-ig-app-id': '936619743392459',
         'x-asbd-id': '129477',
         'x-requested-with': 'XMLHttpRequest',
@@ -179,14 +277,17 @@ export default async function handler(event) {
       });
     }
 
-    const response = await fetch(parsed.profileUrl, {
-      headers: {
-        'user-agent':
-          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        accept: 'text/html,application/xhtml+xml',
-        'accept-language': 'en-US,en;q=0.9',
-      },
-    });
+    const picukiProfile = await fetchPicukiProfile(parsed.handle);
+    if (picukiProfile?.ok && picukiProfile?.avatarUrl) {
+      return Response.json(picukiProfile, {
+        status: 200,
+        headers: {
+          'cache-control': 'no-store',
+        },
+      });
+    }
+
+    const response = await fetch(parsed.profileUrl, { headers: BROWSER_HEADERS });
 
     if (!response.ok) {
       return Response.json({ error: 'Failed to fetch Instagram profile' }, {
@@ -214,6 +315,7 @@ export default async function handler(event) {
         handle: parsed.handle,
         profileUrl: parsed.profileUrl,
         apiProfile,
+        picukiProfile,
         fallback: {
           ogTitle,
           ogImage,
