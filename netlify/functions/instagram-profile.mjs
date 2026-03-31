@@ -92,6 +92,10 @@ function extractDisplayName(ogTitle, handle) {
   return match?.[1]?.trim() || handle;
 }
 
+function buildInstagramAvatarUrl(handle) {
+  return `https://unavatar.io/instagram/${handle}`;
+}
+
 function extractImageFromHtml(html, predicates = []) {
   const imgTags = html.match(/<img\b[^>]*>/gi) || [];
 
@@ -319,6 +323,7 @@ export default async function handler(event) {
         fallback: {
           ogTitle,
           ogImage,
+          fallbackAvatarUrl: buildInstagramAvatarUrl(parsed.handle),
           htmlHasOgImage: html.includes('og:image'),
           htmlHasProfilePicUrl: html.includes('profile_pic_url'),
         },
@@ -334,7 +339,7 @@ export default async function handler(event) {
       handle: parsed.handle,
       profileUrl: parsed.profileUrl,
       displayName,
-      avatarUrl: ogImage,
+      avatarUrl: ogImage || buildInstagramAvatarUrl(parsed.handle),
     }, {
       status: 200,
       headers: {

@@ -256,7 +256,7 @@ function buildInstagramProfileUrl(handle: string): string {
 }
 
 function buildInstagramAvatarUrl(handle: string): string {
-  return `https://unavatar.io/instagram/${handle}?ttl=600`;
+  return `https://unavatar.io/instagram/${handle}`;
 }
 
 function readAvatarCache(): Record<string, string> {
@@ -586,6 +586,34 @@ export function EditableComment() {
     const detected = detectLanguage();
     setLanguage(detected);
     setData((prev) => ({ ...prev, timeAgo: defaultTimeAgo(detected) }));
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const params = new URLSearchParams(window.location.search);
+    const instagramUrl =
+      params.get('ig') || params.get('instagram') || params.get('instagramUrl') || '';
+    const avatarUrl = params.get('avatar') || params.get('avatarUrl') || '';
+    const username = params.get('username') || params.get('name') || '';
+
+    if (!instagramUrl && !avatarUrl && !username) {
+      return;
+    }
+
+    const parsedInstagram = instagramUrl ? parseInstagramInput(instagramUrl) : null;
+    const normalizedInstagramUrl = parsedInstagram?.profileUrl || instagramUrl || data.instagramUrl;
+
+    setData((prev) => ({
+      ...prev,
+      instagramUrl: normalizedInstagramUrl,
+      username: username || parsedInstagram?.handle || prev.username,
+      avatarUrl: avatarUrl ? proxyAvatarUrl(avatarUrl) : prev.avatarUrl,
+    }));
+
+    if (instagramUrl) {
+      setAvatarUrlDraft(normalizedInstagramUrl);
+    }
   }, []);
 
   useEffect(() => {
