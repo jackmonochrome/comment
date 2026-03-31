@@ -56,9 +56,22 @@ function extractDisplayName(ogTitle, handle) {
   return match?.[1]?.trim() || handle;
 }
 
+function getInputFromRequest(request) {
+  if (request?.queryStringParameters) {
+    return request.queryStringParameters.input || request.queryStringParameters.username || '';
+  }
+
+  try {
+    const url = new URL(request.url);
+    return url.searchParams.get('input') || url.searchParams.get('username') || '';
+  } catch {
+    return '';
+  }
+}
+
 export default async function handler(event) {
   try {
-    const input = event.queryStringParameters?.input || event.queryStringParameters?.username || '';
+    const input = getInputFromRequest(event);
     const parsed = parseInstagramInput(input);
 
     if (!parsed) {
@@ -94,24 +107,24 @@ export default async function handler(event) {
     const displayName = extractDisplayName(ogTitle, parsed.handle);
 
     return Response.json({
-        handle: parsed.handle,
-        profileUrl: parsed.profileUrl,
-        displayName,
-        avatarUrl: ogImage,
-      }, {
-        status: 200,
-        headers: {
-          'cache-control': 'public, max-age=300',
-        },
-      });
+      handle: parsed.handle,
+      profileUrl: parsed.profileUrl,
+      displayName,
+      avatarUrl: ogImage,
+    }, {
+      status: 200,
+      headers: {
+        'cache-control': 'public, max-age=300',
+      },
+    });
   } catch (error) {
     return Response.json({
-        error: error instanceof Error ? error.message : 'Unknown error',
-      }, {
-        status: 500,
-        headers: {
-          'cache-control': 'no-store',
-        },
-      });
+      error: error instanceof Error ? error.message : 'Unknown error',
+    }, {
+      status: 500,
+      headers: {
+        'cache-control': 'no-store',
+      },
+    });
   }
 }
