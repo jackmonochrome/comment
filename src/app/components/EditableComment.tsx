@@ -22,6 +22,7 @@ interface CommentData {
 
 const INSTAGRAM_URL = 'https://www.instagram.com/wdmchk/';
 const DEMO_INSTAGRAM_ACCOUNT = 'https://www.instagram.com/ladygaga';
+const AVATAR_CACHE_KEY = 'commentmaker-avatar-cache-v1';
 
 const LANGUAGE_OPTIONS: Array<{ value: SupportedLanguage; label: string }> = [
   { value: 'en', label: 'English' },
@@ -256,6 +257,41 @@ function buildInstagramProfileUrl(handle: string): string {
 
 function buildInstagramAvatarUrl(handle: string): string {
   return `https://unavatar.io/instagram/${handle}?ttl=600`;
+}
+
+function readAvatarCache(): Record<string, string> {
+  if (typeof window === 'undefined') return {};
+
+  try {
+    const raw = window.localStorage.getItem(AVATAR_CACHE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeAvatarCache(cache: Record<string, string>) {
+  if (typeof window === 'undefined') return;
+
+  try {
+    window.localStorage.setItem(AVATAR_CACHE_KEY, JSON.stringify(cache));
+  } catch {
+    // Ignore localStorage write failures.
+  }
+}
+
+function getCachedAvatar(handle: string): string | null {
+  const cache = readAvatarCache();
+  return cache[handle.toLowerCase()] || null;
+}
+
+function cacheAvatar(handle: string, avatarUrl: string) {
+  if (!handle || !avatarUrl) return;
+  const cache = readAvatarCache();
+  cache[handle.toLowerCase()] = avatarUrl;
+  writeAvatarCache(cache);
 }
 
 async function fetchInstagramProfile(input: string): Promise<{
@@ -613,7 +649,14 @@ export function EditableComment() {
     if (file) {
       const reader = new FileReader();
       reader.onloadend = () => {
-        setData((prev) => ({ ...prev, avatarUrl: reader.result as string }));
+        const nextAvatar = reader.result as string;
+        setData((prev) => ({ ...prev, avatarUrl: nextAvatar }));
+
+        const currentHandle =
+          parseInstagramInput(avatarUrlDraft)?.handle || parseInstagramInput(data.instagramUrl)?.handle;
+        if (currentHandle) {
+          cacheAvatar(currentHandle, nextAvatar);
+        }
       };
       reader.readAsDataURL(file);
     }
@@ -626,12 +669,22 @@ export function EditableComment() {
     const instagramInput = parseInstagramInput(trimmed);
     if (instagramInput) {
       const profile = await fetchInstagramProfile(trimmed).catch(() => null);
+      const resolvedAvatar =
+        profile?.avatarUrl ||
+        getCachedAvatar(instagramInput.handle) ||
+        buildInstagramAvatarUrl(instagramInput.handle);
+
       setData((prev) => ({
         ...prev,
         instagramUrl: profile?.profileUrl || instagramInput.profileUrl,
         username: profile?.displayName || profile?.handle || instagramInput.handle,
-        avatarUrl: profile?.avatarUrl || buildInstagramAvatarUrl(instagramInput.handle),
+        avatarUrl: resolvedAvatar,
       }));
+
+      if (profile?.avatarUrl) {
+        cacheAvatar(instagramInput.handle, profile.avatarUrl);
+      }
+
       setAvatarUrlDraft(profile?.profileUrl || instagramInput.profileUrl);
       return;
     }

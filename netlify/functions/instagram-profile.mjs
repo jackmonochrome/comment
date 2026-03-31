@@ -241,12 +241,12 @@ export default async function handler(event) {
     });
   } catch (error) {
     return Response.json({
-      error: error instanceof Error ? error.message : 'Unknown error',
-    }, {
-      status: 500,
-      headers: {
-        'cache-control': 'no-store',
-      },
-    });
+        error: error instanceof Error ? error.message : 'Unknown error',
+      }, {
+        status: 500,
+        headers: {
+          'cache-control': 'no-store',
+        },
+      });
   }
 }
