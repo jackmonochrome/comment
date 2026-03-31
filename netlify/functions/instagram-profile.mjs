@@ -23,14 +23,21 @@ function parseInstagramInput(input) {
     const parsed = new URL(candidate);
     if (!parsed.hostname.toLowerCase().includes('instagram.com')) return null;
 
-    const [firstSegment] = parsed.pathname.split('/').filter(Boolean);
+    const segments = parsed.pathname.split('/').filter(Boolean);
+    const [firstSegment, secondSegment] = segments;
     if (!firstSegment) return null;
-    if (['p', 'reel', 'reels', 'stories', 'explore', 'accounts'].includes(firstSegment)) {
-      return null;
+    if ((firstSegment === 'p' || firstSegment === 'reel' || firstSegment === 'reels') && secondSegment) {
+      return {
+        kind: 'media',
+        shortcode: secondSegment,
+        mediaUrl: `https://${INSTAGRAM_HOST}/${firstSegment}/${secondSegment}/`,
+      };
     }
+    if (['stories', 'explore', 'accounts'].includes(firstSegment)) return null;
     if (!/^[a-zA-Z0-9._]{1,30}$/.test(firstSegment)) return null;
 
     return {
+      kind: 'profile',
       handle: firstSegment,
       profileUrl: `https://${INSTAGRAM_HOST}/${firstSegment}/`,
     };
@@ -92,6 +99,18 @@ function extractDisplayName(ogTitle, handle) {
   return match?.[1]?.trim() || handle;
 }
 
+function extractPostDisplayName(ogTitle, handle = '') {
+  if (!ogTitle) return handle;
+  const match = ogTitle.match(/^(.*?)\s+on\s+Instagram:/i);
+  return match?.[1]?.trim() || handle;
+}
+
+function extractPostOwnerHandle(ogDescription) {
+  if (!ogDescription) return '';
+  const match = ogDescription.match(/-\s*([a-zA-Z0-9._]{1,30})\s+on\b/i);
+  return match?.[1] || '';
+}
+
 function extractImageFromHtml(html, predicates = []) {
   const imgTags = html.match(/<img\b[^>]*>/gi) || [];
 
@@ -109,6 +128,36 @@ function extractImageFromHtml(html, predicates = []) {
   }
 
   return null;
+}
+
+function extractBestMediaImageFromEmbed(html) {
+  const imgTags = html.match(/<img\b[^>]*>/gi) || [];
+  let best = null;
+
+  for (const tag of imgTags) {
+    const srcMatch = tag.match(/\bsrc\s*=\s*("([^"]*)"|'([^']*)')/i);
+    const src = srcMatch?.[2] ?? srcMatch?.[3] ?? '';
+    if (!src) continue;
+
+    const normalizedSrc = decodeHtml(src);
+    if (!normalizedSrc.startsWith('http')) continue;
+
+    let score = 0;
+    if (/profile_pic|s150x150|t51\.82787-19/i.test(normalizedSrc)) score -= 200;
+    if (/t51\.82787-15|t51\.71878-15/i.test(normalizedSrc)) score += 40;
+    if (/1440|1080|960|750|640|540|480|360|240/i.test(normalizedSrc)) score += 25;
+
+    const widthMatch = tag.match(/\bwidth\s*=\s*("([^"]*)"|'([^']*)')/i);
+    const width = Number(widthMatch?.[2] ?? widthMatch?.[3] ?? 0);
+    if (width >= 300) score += 30;
+    if (width >= 600) score += 40;
+
+    if (!best || score > best.score) {
+      best = { src: normalizedSrc, score };
+    }
+  }
+
+  return best?.src || null;
 }
 
 async function fetchHtml(url, headers = {}) {
@@ -187,168 +236,4 @@ async function fetchPicukiProfile(handle) {
 }
 
 async function fetchInstagramProfileJson(handle, profileUrl) {
-  const response = await fetch(
-    `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(handle)}`,
-    {
-      headers: {
-        ...BROWSER_HEADERS,
-        accept: '*/*',
-        'x-ig-app-id': '936619743392459',
-        'x-asbd-id': '129477',
-        'x-requested-with': 'XMLHttpRequest',
-        referer: profileUrl,
-      },
-    }
-  );
-
-  if (!response.ok) {
-    return {
-      ok: false,
-      status: response.status,
-      reason: 'http_error',
-    };
-  }
-
-  const payload = await response.json();
-  const user = payload?.data?.user;
-  if (!user) {
-    return {
-      ok: false,
-      status: response.status,
-      reason: 'missing_user',
-      payloadKeys: Object.keys(payload || {}),
-    };
-  }
-
-  return {
-    ok: true,
-    status: response.status,
-    handle: user.username || handle,
-    profileUrl,
-    displayName: user.full_name || user.username || handle,
-    avatarUrl: user.profile_pic_url_hd || user.profile_pic_url || null,
-  };
-}
-
-function getInputFromRequest(request) {
-  if (request?.queryStringParameters) {
-    return request.queryStringParameters.input || request.queryStringParameters.username || '';
-  }
-
-  try {
-    const url = new URL(request.url);
-    return url.searchParams.get('input') || url.searchParams.get('username') || '';
-  } catch {
-    return '';
-  }
-}
-
-function shouldDebug(request) {
-  try {
-    const url = new URL(request.url);
-    return url.searchParams.get('debug') === '1';
-  } catch {
-    return false;
-  }
-}
-
-export default async function handler(event) {
-  try {
-    const input = getInputFromRequest(event);
-    const debug = shouldDebug(event);
-    const parsed = parseInstagramInput(input);
-
-    if (!parsed) {
-      return Response.json({ error: 'Invalid Instagram input' }, {
-        status: 400,
-        headers: {
-          'cache-control': 'no-store',
-        },
-      });
-    }
-
-    const apiProfile = await fetchInstagramProfileJson(parsed.handle, parsed.profileUrl);
-    if (apiProfile?.ok && apiProfile?.avatarUrl) {
-      return Response.json(apiProfile, {
-        status: 200,
-        headers: {
-          'cache-control': 'no-store',
-        },
-      });
-    }
-
-    const picukiProfile = await fetchPicukiProfile(parsed.handle);
-    if (picukiProfile?.ok && picukiProfile?.avatarUrl) {
-      return Response.json(picukiProfile, {
-        status: 200,
-        headers: {
-          'cache-control': 'no-store',
-        },
-      });
-    }
-
-    const response = await fetch(parsed.profileUrl, { headers: BROWSER_HEADERS });
-
-    if (!response.ok) {
-      return Response.json({ error: 'Failed to fetch Instagram profile' }, {
-        status: response.status,
-        headers: {
-          'cache-control': 'no-store',
-        },
-      });
-    }
-
-    const html = await response.text();
-    const ogImage =
-      extractMeta(html, 'og:image') ||
-      extractMeta(html, 'twitter:image', 'name') ||
-      extractJsonString(html, 'profile_pic_url') ||
-      extractJsonString(html, 'profile_pic_url_hd');
-    const ogTitle =
-      extractMeta(html, 'og:title') ||
-      extractMeta(html, 'twitter:title', 'name') ||
-      extractJsonString(html, 'full_name');
-    const displayName = extractDisplayName(ogTitle, parsed.handle);
-
-    if (debug) {
-      return Response.json({
-        handle: parsed.handle,
-        profileUrl: parsed.profileUrl,
-        apiProfile,
-        picukiProfile,
-        fallback: {
-          ogTitle,
-          ogImage,
-          htmlHasOgImage: html.includes('og:image'),
-          htmlHasProfilePicUrl: html.includes('profile_pic_url'),
-        },
-      }, {
-        status: 200,
-        headers: {
-          'cache-control': 'no-store',
-        },
-      });
-    }
-
-    return Response.json({
-      handle: parsed.handle,
-      profileUrl: parsed.profileUrl,
-      displayName,
-      avatarUrl: ogImage || null,
-    }, {
-      status: 200,
-      headers: {
-        'cache-control': 'no-store',
-      },
-    });
-  } catch (error) {
-    return Response.json({
-        error: error instanceof Error ? error.message : 'Unknown error',
-      }, {
-        status: 500,
-        headers: {
-          'cache-control': 'no-store',
-        },
-      });
-  }
-}
+         
