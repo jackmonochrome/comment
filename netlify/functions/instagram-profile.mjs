@@ -96,22 +96,35 @@ async function fetchInstagramProfileJson(handle, profileUrl) {
         accept: '*/*',
         'accept-language': 'en-US,en;q=0.9',
         'x-ig-app-id': '936619743392459',
+        'x-asbd-id': '129477',
+        'x-requested-with': 'XMLHttpRequest',
         referer: profileUrl,
       },
     }
   );
 
   if (!response.ok) {
-    return null;
+    return {
+      ok: false,
+      status: response.status,
+      reason: 'http_error',
+    };
   }
 
   const payload = await response.json();
   const user = payload?.data?.user;
   if (!user) {
-    return null;
+    return {
+      ok: false,
+      status: response.status,
+      reason: 'missing_user',
+      payloadKeys: Object.keys(payload || {}),
+    };
   }
 
   return {
+    ok: true,
+    status: response.status,
     handle: user.username || handle,
     profileUrl,
     displayName: user.full_name || user.username || handle,
@@ -132,9 +145,19 @@ function getInputFromRequest(request) {
   }
 }
 
+function shouldDebug(request) {
+  try {
+    const url = new URL(request.url);
+    return url.searchParams.get('debug') === '1';
+  } catch {
+    return false;
+  }
+}
+
 export default async function handler(event) {
   try {
     const input = getInputFromRequest(event);
+    const debug = shouldDebug(event);
     const parsed = parseInstagramInput(input);
 
     if (!parsed) {
@@ -147,7 +170,7 @@ export default async function handler(event) {
     }
 
     const apiProfile = await fetchInstagramProfileJson(parsed.handle, parsed.profileUrl);
-    if (apiProfile?.avatarUrl) {
+    if (apiProfile?.ok && apiProfile?.avatarUrl) {
       return Response.json(apiProfile, {
         status: 200,
         headers: {
@@ -185,6 +208,25 @@ export default async function handler(event) {
       extractMeta(html, 'twitter:title', 'name') ||
       extractJsonString(html, 'full_name');
     const displayName = extractDisplayName(ogTitle, parsed.handle);
+
+    if (debug) {
+      return Response.json({
+        handle: parsed.handle,
+        profileUrl: parsed.profileUrl,
+        apiProfile,
+        fallback: {
+          ogTitle,
+          ogImage,
+          htmlHasOgImage: html.includes('og:image'),
+          htmlHasProfilePicUrl: html.includes('profile_pic_url'),
+        },
+      }, {
+        status: 200,
+        headers: {
+          'cache-control': 'no-store',
+        },
+      });
+    }
 
     return Response.json({
       handle: parsed.handle,
