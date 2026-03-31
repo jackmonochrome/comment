@@ -265,7 +265,7 @@ async function fetchInstagramProfile(input: string): Promise<{
   avatarUrl?: string;
 } | null> {
   const response = await fetch(
-    `/.netlify/functions/instagram-profile?input=${encodeURIComponent(input)}`
+    `/.netlify/functions/instagram-profile?input=${encodeURIComponent(input)}&t=${Date.now()}`
   );
 
   if (!response.ok) {

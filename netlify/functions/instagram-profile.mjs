@@ -151,7 +151,7 @@ export default async function handler(event) {
       return Response.json(apiProfile, {
         status: 200,
         headers: {
-          'cache-control': 'public, max-age=300',
+          'cache-control': 'no-store',
         },
       });
     }
@@ -194,7 +194,7 @@ export default async function handler(event) {
     }, {
       status: 200,
       headers: {
-        'cache-control': 'public, max-age=300',
+        'cache-control': 'no-store',
       },
     });
   } catch (error) {
