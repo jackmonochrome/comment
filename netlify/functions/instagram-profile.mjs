@@ -45,9 +45,39 @@ function decodeHtml(value) {
 }
 
 function extractMeta(html, key, attr = 'property') {
-  const regex = new RegExp(`<meta[^>]+${attr}="${key}"[^>]+content="([^"]+)"`, 'i');
-  const match = html.match(regex);
-  return match ? decodeHtml(match[1]) : null;
+  const metaTags = html.match(/<meta\b[^>]*>/gi) || [];
+
+  for (const tag of metaTags) {
+    const attrRegex = /([:@a-zA-Z0-9_-]+)\s*=\s*("([^"]*)"|'([^']*)')/g;
+    const attrs = {};
+    let match;
+
+    while ((match = attrRegex.exec(tag))) {
+      attrs[match[1].toLowerCase()] = match[3] ?? match[4] ?? '';
+    }
+
+    if (attrs[attr] === key && attrs.content) {
+      return decodeHtml(attrs.content);
+    }
+  }
+
+  return null;
+}
+
+function extractJsonString(html, key) {
+  const patterns = [
+    new RegExp(`"${key}"\\s*:\\s*"([^"]+)"`, 'i'),
+    new RegExp(`${key}\\\\?":\\\\?"([^"]+)`, 'i'),
+  ];
+
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (match?.[1]) {
+      return decodeHtml(match[1].replace(/\\u0026/g, '&').replace(/\\\//g, '/'));
+    }
+  }
+
+  return null;
 }
 
 function extractDisplayName(ogTitle, handle) {
@@ -102,8 +132,15 @@ export default async function handler(event) {
     }
 
     const html = await response.text();
-    const ogImage = extractMeta(html, 'og:image');
-    const ogTitle = extractMeta(html, 'og:title');
+    const ogImage =
+      extractMeta(html, 'og:image') ||
+      extractMeta(html, 'twitter:image') ||
+      extractJsonString(html, 'profile_pic_url') ||
+      extractJsonString(html, 'profile_pic_url_hd');
+    const ogTitle =
+      extractMeta(html, 'og:title') ||
+      extractMeta(html, 'twitter:title') ||
+      extractJsonString(html, 'full_name');
     const displayName = extractDisplayName(ogTitle, parsed.handle);
 
     return Response.json({
