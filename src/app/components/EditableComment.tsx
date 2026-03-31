@@ -256,7 +256,7 @@ function buildInstagramProfileUrl(handle: string): string {
 }
 
 function buildInstagramAvatarUrl(handle: string): string {
-  return `https://unavatar.io/instagram/${handle}`;
+  return '';
 }
 
 function readAvatarCache(): Record<string, string> {
@@ -697,16 +697,13 @@ export function EditableComment() {
     const instagramInput = parseInstagramInput(trimmed);
     if (instagramInput) {
       const profile = await fetchInstagramProfile(trimmed).catch(() => null);
-      const resolvedAvatar =
-        profile?.avatarUrl ||
-        getCachedAvatar(instagramInput.handle) ||
-        buildInstagramAvatarUrl(instagramInput.handle);
+      const resolvedAvatar = profile?.avatarUrl || getCachedAvatar(instagramInput.handle);
 
       setData((prev) => ({
         ...prev,
         instagramUrl: profile?.profileUrl || instagramInput.profileUrl,
         username: profile?.displayName || profile?.handle || instagramInput.handle,
-        avatarUrl: resolvedAvatar,
+        avatarUrl: resolvedAvatar || prev.avatarUrl,
       }));
 
       if (profile?.avatarUrl) {
